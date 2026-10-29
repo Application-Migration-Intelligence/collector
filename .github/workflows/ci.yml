@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-26.04
+    strategy:
+      matrix:
+        # The oldest Go in go.mod, and the Go releases are built with.
+        go: ['1.24.x', '1.27.3']
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ matrix.go }}
+          check-latest: false
+      - name: Lint
+        run: make lint
+      - name: Tests
+        run: make test
+
+  reproducible:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.27.3'
+      - name: Two builds give identical binaries
+        run: |
+          make release VERSION=v0.0.0-check
+          mv dist first
+          go clean -cache
+          make release VERSION=v0.0.0-check
+          diff first/SHA256SUMS dist/SHA256SUMS
+          cat dist/SHA256SUMS

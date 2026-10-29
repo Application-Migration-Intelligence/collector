@@ -1,0 +1,38 @@
+name: Release
+
+# A tag v* builds the Linux binaries reproducibly, publishes their SHA-256
+# checksums, signs the checksum file with Sigstore (keyless, tied to this
+# workflow and tag), and creates the GitHub release with install.sh.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write  # create the release
+  id-token: write  # Sigstore keyless signing
+
+jobs:
+  release:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.27.3'
+          check-latest: false
+      - name: Test
+        run: make lint test
+      - name: Build
+        run: make release VERSION="$GITHUB_REF_NAME"
+      - uses: sigstore/cosign-installer@v3
+      - name: Sign the checksums
+        run: cosign sign-blob --yes --bundle dist/SHA256SUMS.sigstore.json dist/SHA256SUMS
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp scripts/install.sh dist/install.sh
+          gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" \
+            --notes "Built with Go 1.27.3 from tag $GITHUB_REF_NAME. Verify with SHA256SUMS and SHA256SUMS.sigstore.json (see README)." \
+            dist/mig-collector-linux-amd64 dist/mig-collector-linux-arm64 \
+            dist/SHA256SUMS dist/SHA256SUMS.sigstore.json dist/install.sh
