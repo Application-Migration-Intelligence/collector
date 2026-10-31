@@ -260,8 +260,11 @@ func run(ctx context.Context, args ...string) (string, error) {
 	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME"), "LC_ALL=C", "COMPOSER_NO_INTERACTION=1"}
 	cmd.Stdin = nil
 	var out bytes.Buffer
-	cmd.Stdout = &limited{w: &out, n: maxOutput}
-	cmd.Stderr = &limited{w: &out, n: maxOutput} // several tools print versions to stderr
+	// One writer for both: several tools print versions to stderr, and exec
+	// only serialises the two streams when they share the same writer.
+	w := &limited{w: &out, n: maxOutput}
+	cmd.Stdout = w
+	cmd.Stderr = w
 	err = cmd.Run()
 	return strings.TrimSpace(out.String()), err
 }
