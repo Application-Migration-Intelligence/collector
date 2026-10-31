@@ -14,11 +14,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -56,6 +58,7 @@ type Paths struct {
 	Config string // ~/.config/mig-agent/agent.json
 	Binary string // ~/.local/share/mig-agent/mig-collector
 	Lock   string // ~/.local/share/mig-agent/poll.lock
+	State  string // ~/.local/share/mig-agent/state.json (backoff)
 }
 
 // DefaultPaths uses XDG locations under the user's home folder.
@@ -76,6 +79,7 @@ func DefaultPaths() (Paths, error) {
 		Config: filepath.Join(cfg, "mig-agent", "agent.json"),
 		Binary: filepath.Join(data, "mig-agent", "mig-collector"),
 		Lock:   filepath.Join(data, "mig-agent", "poll.lock"),
+		State:  filepath.Join(data, "mig-agent", "state.json"),
 	}, nil
 }
 
@@ -221,11 +225,28 @@ type Client struct {
 	UserAgent string
 }
 
+// RetryError is a refusal the agent should back off from (429 or 5xx),
+// with the server's Retry-After when it sent one.
+type RetryError struct {
+	Err   error
+	After time.Duration
+}
+
+func (e *RetryError) Error() string { return e.Err.Error() }
+func (e *RetryError) Unwrap() error { return e.Err }
+
 // Poll asks for a scan request. It returns "" when there is none.
 func (c *Client) Poll(ctx context.Context) (string, error) {
 	resp, body, err := c.post(ctx, "/api/agent/v1/poll", nil, "")
 	if err != nil {
-		return "", err
+		return "", &RetryError{Err: err} // network failure: back off
+	}
+	if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
+		after := time.Duration(0)
+		if s, perr := strconv.Atoi(resp.Header.Get("Retry-After")); perr == nil && s > 0 {
+			after = time.Duration(s) * time.Second
+		}
+		return "", &RetryError{Err: problem(resp, body), After: after}
 	}
 	switch resp.StatusCode {
 	case http.StatusNoContent:
@@ -325,4 +346,56 @@ func Lock(path string) (func(), error) {
 		return nil, errors.New("another agent run is still in progress")
 	}
 	return nil, errors.New("could not take the agent lock")
+}
+
+// Backoff state: after failures to reach MigrateIntel the agent waits longer
+// before asking again (5 minutes doubling to an hour, or the server's
+// Retry-After), so a fleet of agents never hammers the service.
+type State struct {
+	Failures  int       `json:"failures"`
+	NextAfter time.Time `json:"next_after"`
+}
+
+// MaxBackoff caps the wait between attempts.
+const MaxBackoff = time.Hour
+
+// LoadState reads the backoff state; a missing or damaged file means none.
+func LoadState(path string) State {
+	var s State
+	if data, err := os.ReadFile(path); err == nil {
+		_ = json.Unmarshal(data, &s)
+	}
+	return s
+}
+
+// SaveState writes the backoff state (0600).
+func SaveState(path string, s State) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	data, _ := json.Marshal(s)
+	return os.WriteFile(path, data, 0o600)
+}
+
+// Failed records a failure and when to try again.
+func (s State) Failed(now time.Time, retryAfter time.Duration) State {
+	s.Failures++
+	wait := 5 * time.Minute << min(s.Failures-1, 4) // 5, 10, 20, 40, 80 min
+	if wait > MaxBackoff {
+		wait = MaxBackoff
+	}
+	if retryAfter > wait {
+		wait = min(retryAfter, 6*time.Hour)
+	}
+	// Jitter the wait by up to a fifth, so agents that failed together don't
+	// come back together.
+	wait += time.Duration(rand.Int64N(int64(wait/5) + 1))
+	s.NextAfter = now.Add(wait)
+	return s
+}
+
+// Jitter is the random delay before a scheduled poll, so agents whose cron
+// fires at the same minute spread their requests over a minute and a half.
+func Jitter() time.Duration {
+	return time.Duration(rand.Int64N(int64(90 * time.Second)))
 }

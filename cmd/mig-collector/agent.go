@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/Application-Migration-Intelligence/collector/internal/agent"
 	"github.com/Application-Migration-Intelligence/collector/internal/upload"
@@ -17,6 +18,8 @@ import (
 // agentEnv lets tests point the agent at temporary paths, a fake crontab and
 // a test server. In normal use every field is nil and the real ones are used.
 type agentEnv struct {
+	now     func() time.Time
+	sleep   func(time.Duration)
 	paths   *agent.Paths
 	crontab agent.Crontab
 	self    string
@@ -36,6 +39,7 @@ func runAgent(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	fs.SetOutput(stderr)
 	endpoint := fs.String("endpoint", upload.DefaultEndpoint, "MigrateIntel address")
 	noServer := fs.Bool("no-server", false, "leave out server facts and configuration")
+	now := fs.Bool("now", false, "poll at once, without the random delay and the backoff wait (poll)")
 	if err := fs.Parse(rest); err != nil {
 		return exitUsage
 	}
@@ -49,7 +53,9 @@ func runAgent(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		}
 		err = agentInstall(ctx, stdout, fs.Arg(0), *endpoint, *noServer)
 	case "poll":
-		err = agentPoll(ctx, stdout)
+		err = agentPoll(ctx, stdout, *now)
+	case "set-token":
+		err = agentSetToken(ctx, stdout)
 	case "status":
 		err = agentStatus(ctx, stdout)
 	case "remove":
@@ -135,10 +141,37 @@ func agentInstall(ctx context.Context, stdout io.Writer, folder, endpoint string
 	return nil
 }
 
-func agentPoll(ctx context.Context, stdout io.Writer) error {
+func clock() time.Time {
+	if testAgentEnv != nil && testAgentEnv.now != nil {
+		return testAgentEnv.now()
+	}
+	return time.Now()
+}
+
+func pause(ctx context.Context, d time.Duration) {
+	if testAgentEnv != nil && testAgentEnv.sleep != nil {
+		testAgentEnv.sleep(d)
+		return
+	}
+	select {
+	case <-ctx.Done():
+	case <-time.After(d):
+	}
+}
+
+func agentPoll(ctx context.Context, stdout io.Writer, now bool) error {
 	paths, _, err := agentSetup()
 	if err != nil {
 		return err
+	}
+	state := agent.LoadState(paths.State)
+	if !now {
+		// After failures, wait until the backoff is over; cron keeps calling.
+		if clock().Before(state.NextAfter) {
+			return nil
+		}
+		// Spread a fleet of agents whose cron fires at the same minute.
+		pause(ctx, agent.Jitter())
 	}
 	unlock, err := agent.Lock(paths.Lock)
 	if err != nil {
@@ -155,6 +188,14 @@ func agentPoll(ctx context.Context, stdout io.Writer) error {
 	}
 	client := agentClient(base, cfg.Token)
 	id, err := client.Poll(ctx)
+	var retry *agent.RetryError
+	if errors.As(err, &retry) {
+		_ = agent.SaveState(paths.State, state.Failed(clock(), retry.After))
+		return err
+	}
+	if state.Failures > 0 {
+		_ = agent.SaveState(paths.State, agent.State{})
+	}
 	if err != nil || id == "" {
 		return err
 	}
@@ -201,6 +242,36 @@ func agentScan(ctx context.Context, stdout io.Writer, cfg agent.Config, url stri
 	return nil
 }
 
+// agentSetToken gives the agent a replacement token (from "New token" on the
+// project page) without reinstalling it.
+func agentSetToken(ctx context.Context, stdout io.Writer) error {
+	token := strings.TrimSpace(os.Getenv("MIG_AGENT_TOKEN"))
+	if err := agent.CheckToken(token); err != nil {
+		return fmt.Errorf("%w: %v", errUsage, err)
+	}
+	paths, _, err := agentSetup()
+	if err != nil {
+		return err
+	}
+	cfg, err := agent.LoadConfig(paths.Config)
+	if err != nil && !strings.Contains(err.Error(), "token") {
+		return err
+	}
+	if cfg.Folder == "" {
+		return errors.New("the agent is not installed for this user (run the install command from your project page)")
+	}
+	cfg.Token = token
+	if err := agent.SaveConfig(paths.Config, cfg); err != nil {
+		return err
+	}
+	_ = agent.SaveState(paths.State, agent.State{})
+	if _, err := agentClient(cfg.Endpoint, token).Poll(ctx); err != nil {
+		return fmt.Errorf("token saved, but MigrateIntel refused it: %w", err)
+	}
+	fmt.Fprintln(stdout, "New token saved; the agent checked in with it.")
+	return nil
+}
+
 func agentStatus(ctx context.Context, stdout io.Writer) error {
 	paths, crontab, err := agentSetup()
 	if err != nil {
@@ -238,7 +309,7 @@ func agentRemove(ctx context.Context, stdout io.Writer) error {
 			return err
 		}
 	}
-	for _, p := range []string{paths.Config, paths.Binary, paths.Lock} {
+	for _, p := range []string{paths.Config, paths.Binary, paths.Lock, paths.State} {
 		if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}

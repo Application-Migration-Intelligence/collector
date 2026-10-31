@@ -51,7 +51,10 @@ Usage:
       Opt-in agent: lets you start scans from your project page. Every 5 minutes
       it asks MigrateIntel (outbound only) whether a scan was requested. The
       token is read from MIG_AGENT_TOKEN. No root needed: it uses your crontab.
-  mig-collector agent status | agent poll | agent remove
+  mig-collector agent status | agent poll [--now] | agent remove
+  mig-collector agent set-token
+      Give the agent a new token (from "New token" on your project page) without
+      reinstalling it. The token is read from MIG_AGENT_TOKEN.
   mig-collector version
 
 FOLDER is the application folder (the one with composer.json); the default is
