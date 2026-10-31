@@ -60,6 +60,16 @@ func New(version string) *Client {
 
 // CheckEndpoint returns the intake URL for an endpoint, or why it is refused.
 func CheckEndpoint(endpoint string) (string, error) {
+	base, err := BaseURL(endpoint)
+	if err != nil {
+		return "", err
+	}
+	return base + Path, nil
+}
+
+// BaseURL returns https://<host> for an endpoint, or why it is refused: it
+// must be https and one of the MigrateIntel hosts.
+func BaseURL(endpoint string) (string, error) {
 	u, err := url.Parse(strings.TrimRight(endpoint, "/"))
 	if err != nil {
 		return "", err
@@ -70,7 +80,7 @@ func CheckEndpoint(endpoint string) (string, error) {
 	if !allowedHosts[strings.ToLower(u.Hostname())] || (u.Port() != "" && u.Port() != "443") {
 		return "", fmt.Errorf("%s is not a MigrateIntel host; the collector only sends to MigrateIntel", u.Host)
 	}
-	return "https://" + strings.ToLower(u.Hostname()) + Path, nil
+	return "https://" + strings.ToLower(u.Hostname()), nil
 }
 
 // CheckKey validates a project key's shape (the intake checks it for real).

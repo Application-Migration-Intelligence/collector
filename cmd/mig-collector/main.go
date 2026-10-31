@@ -47,6 +47,11 @@ Usage:
       Collect and send to your MigrateIntel project. The one-time project key is
       read from the MIG_COLLECTOR_KEY environment variable, or from standard
       input with --key-stdin.
+  mig-collector agent install [--endpoint URL] [--no-server] FOLDER
+      Opt-in agent: lets you start scans from your project page. Every 5 minutes
+      it asks MigrateIntel (outbound only) whether a scan was requested. The
+      token is read from MIG_AGENT_TOKEN. No root needed: it uses your crontab.
+  mig-collector agent status | agent poll | agent remove
   mig-collector version
 
 FOLDER is the application folder (the one with composer.json); the default is
@@ -66,6 +71,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	defer stop()
 
 	cmd, rest := args[0], args[1:]
+	if cmd == "agent" {
+		return runAgent(ctx, rest, stdout, stderr)
+	}
 	fs := flag.NewFlagSet(cmd, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	asJSON := fs.Bool("json", false, "preview as JSON")
