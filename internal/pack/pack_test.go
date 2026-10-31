@@ -134,3 +134,35 @@ func TestWrite(t *testing.T) {
 		t.Error("package is not deterministic")
 	}
 }
+
+// Regression: the contents of key, certificate, credential and data files are
+// never collected, wherever they sit in the application folder.
+func TestSensitiveFileContentsAreNeverCollected(t *testing.T) {
+	app := t.TempDir()
+	const marker = "SENSITIVE-CONTENT-7f3a"
+	write(t, app, "composer.json", `{"require": {"php": "^8.2"}}`)
+	for _, rel := range []string{
+		"private.key", "request.csr", "server.pem", "cert.crt", "keystore.p12", "id_rsa", "id_ed25519",
+		"auth.json", "database/database.sqlite", "dump.sql", "backup.sql.gz", "storage/oauth-private.key",
+		"uploads/passport.pdf", "public/uploads/id.jpg", ".htpasswd", "credentials.json.bak", ".npmrc",
+	} {
+		write(t, app, rel, marker)
+	}
+	res, err := walk.Walk(app, walk.Defaults)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	if _, err := Write(context.Background(), &buf, res, nil, Options{Version: "test", Now: time.Unix(0, 0), MaxConfigBytes: 1 << 20}); err != nil {
+		t.Fatal(err)
+	}
+	names, files := unpack(t, buf.Bytes())
+	for name, content := range files {
+		if strings.Contains(content, marker) {
+			t.Errorf("%s holds the contents of a sensitive file", name)
+		}
+	}
+	if len(names) == 0 {
+		t.Fatal("empty package")
+	}
+}

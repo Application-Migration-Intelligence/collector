@@ -129,19 +129,48 @@ func gather(ctx context.Context, folder string, server bool) (*plan, error) {
 	if err != nil {
 		return nil, err
 	}
+	if strings.HasPrefix(abs, "/path/to") {
+		return nil, fmt.Errorf("%w: %s is the example from the instructions; give your application's folder, the one that holds composer.json (for example /var/www/yourapp)", errUsage, folder)
+	}
+	if st, err := os.Stat(abs); err != nil {
+		return nil, fmt.Errorf("%w: the folder %s does not exist; give your application's folder, the one that holds composer.json (for example /var/www/yourapp)", errUsage, abs)
+	} else if !st.IsDir() {
+		return nil, fmt.Errorf("%w: %s is a file; give your application's folder, the one that holds composer.json", errUsage, abs)
+	}
 	res, err := walk.Walk(abs, walk.Defaults)
 	if err != nil {
 		return nil, err
 	}
 	p := &plan{res: res}
 	if !hasComposer(res) {
-		return nil, fmt.Errorf("%w: %s has no composer.json; give the application folder", errUsage, abs)
+		if sub := composerBelow(abs); sub != "" {
+			return nil, fmt.Errorf("%w: %s has no composer.json, but %s does; give that folder", errUsage, abs, sub)
+		}
+		return nil, fmt.Errorf("%w: %s has no composer.json; give your application's folder, the one that holds composer.json", errUsage, abs)
 	}
 	if server {
 		f := facts.Collect(ctx, facts.System(), maxConfigBytes)
 		p.facts = &f
 	}
 	return p, nil
+}
+
+// composerBelow names a direct subfolder that holds composer.json, if one does.
+func composerBelow(dir string) string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return ""
+	}
+	for _, e := range entries {
+		if !e.IsDir() || e.Type()&os.ModeSymlink != 0 {
+			continue
+		}
+		candidate := filepath.Join(dir, e.Name())
+		if st, err := os.Lstat(filepath.Join(candidate, "composer.json")); err == nil && st.Mode().IsRegular() {
+			return candidate
+		}
+	}
+	return ""
 }
 
 func hasComposer(res *walk.Result) bool {

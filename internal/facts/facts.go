@@ -155,7 +155,9 @@ func Collect(ctx context.Context, sys FS, maxConfigBytes int64) Facts {
 		}
 		script := `$o=[];foreach(json_decode($argv[1]) as $k){$v=ini_get($k);$o[$k]=$v===false?null:$v;}echo json_encode($o);`
 		keys, _ := json.Marshal(phpIniKeys)
-		if out, err := sys.Run(ctx, "php", "-n", "-d", "display_errors=0", "-r", script, string(keys)); err == nil {
+		// Without -n: the values the server's php.ini actually sets (CLI SAPI), not PHP's
+		// built-in defaults. The script reads named settings only; it prints no secrets.
+		if out, err := sys.Run(ctx, "php", "-d", "display_errors=0", "-r", script, string(keys)); err == nil {
 			_ = json.Unmarshal([]byte(out), &f.PHPIni)
 		}
 	}
