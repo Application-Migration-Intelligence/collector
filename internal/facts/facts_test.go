@@ -51,6 +51,9 @@ func TestCollect(t *testing.T) {
 			return "no crontab for www", errors.New("exit status 1")
 		}
 		if args[0] == "php" && args[1] == "-n" {
+			t.Errorf("php -n reads built-in defaults, not the server's php.ini")
+		}
+		if args[0] == "php" && args[1] == "-d" && args[2] == "display_errors=0" {
 			return `{"memory_limit":"512M","date.timezone":"UTC"}`, nil
 		}
 		return "", errors.New("not found")

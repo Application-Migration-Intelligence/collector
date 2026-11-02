@@ -47,6 +47,14 @@ Usage:
       Collect and send to your MigrateIntel project. The one-time project key is
       read from the MIG_COLLECTOR_KEY environment variable, or from standard
       input with --key-stdin.
+  mig-collector agent install [--endpoint URL] [--no-server] FOLDER
+      Opt-in agent: lets you start scans from your project page. Every 5 minutes
+      it asks MigrateIntel (outbound only) whether a scan was requested. The
+      token is read from MIG_AGENT_TOKEN. No root needed: it uses your crontab.
+  mig-collector agent status | agent poll [--now] | agent remove
+  mig-collector agent set-token
+      Give the agent a new token (from "New token" on your project page) without
+      reinstalling it. The token is read from MIG_AGENT_TOKEN.
   mig-collector version
 
 FOLDER is the application folder (the one with composer.json); the default is
@@ -66,6 +74,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	defer stop()
 
 	cmd, rest := args[0], args[1:]
+	if cmd == "agent" {
+		return runAgent(ctx, rest, stdout, stderr)
+	}
 	fs := flag.NewFlagSet(cmd, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	asJSON := fs.Bool("json", false, "preview as JSON")
@@ -129,19 +140,48 @@ func gather(ctx context.Context, folder string, server bool) (*plan, error) {
 	if err != nil {
 		return nil, err
 	}
+	if strings.HasPrefix(abs, "/path/to") {
+		return nil, fmt.Errorf("%w: %s is the example from the instructions; give your application's folder, the one that holds composer.json (for example /var/www/yourapp)", errUsage, folder)
+	}
+	if st, err := os.Stat(abs); err != nil {
+		return nil, fmt.Errorf("%w: the folder %s does not exist; give your application's folder, the one that holds composer.json (for example /var/www/yourapp)", errUsage, abs)
+	} else if !st.IsDir() {
+		return nil, fmt.Errorf("%w: %s is a file; give your application's folder, the one that holds composer.json", errUsage, abs)
+	}
 	res, err := walk.Walk(abs, walk.Defaults)
 	if err != nil {
 		return nil, err
 	}
 	p := &plan{res: res}
 	if !hasComposer(res) {
-		return nil, fmt.Errorf("%w: %s has no composer.json; give the application folder", errUsage, abs)
+		if sub := composerBelow(abs); sub != "" {
+			return nil, fmt.Errorf("%w: %s has no composer.json, but %s does; give that folder", errUsage, abs, sub)
+		}
+		return nil, fmt.Errorf("%w: %s has no composer.json; give your application's folder, the one that holds composer.json", errUsage, abs)
 	}
 	if server {
 		f := facts.Collect(ctx, facts.System(), maxConfigBytes)
 		p.facts = &f
 	}
 	return p, nil
+}
+
+// composerBelow names a direct subfolder that holds composer.json, if one does.
+func composerBelow(dir string) string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return ""
+	}
+	for _, e := range entries {
+		if !e.IsDir() || e.Type()&os.ModeSymlink != 0 {
+			continue
+		}
+		candidate := filepath.Join(dir, e.Name())
+		if st, err := os.Lstat(filepath.Join(candidate, "composer.json")); err == nil && st.Mode().IsRegular() {
+			return candidate
+		}
+	}
+	return ""
 }
 
 func hasComposer(res *walk.Result) bool {

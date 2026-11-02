@@ -155,7 +155,9 @@ func Collect(ctx context.Context, sys FS, maxConfigBytes int64) Facts {
 		}
 		script := `$o=[];foreach(json_decode($argv[1]) as $k){$v=ini_get($k);$o[$k]=$v===false?null:$v;}echo json_encode($o);`
 		keys, _ := json.Marshal(phpIniKeys)
-		if out, err := sys.Run(ctx, "php", "-n", "-d", "display_errors=0", "-r", script, string(keys)); err == nil {
+		// Without -n: the values the server's php.ini actually sets (CLI SAPI), not PHP's
+		// built-in defaults. The script reads named settings only; it prints no secrets.
+		if out, err := sys.Run(ctx, "php", "-d", "display_errors=0", "-r", script, string(keys)); err == nil {
 			_ = json.Unmarshal([]byte(out), &f.PHPIni)
 		}
 	}
@@ -258,8 +260,11 @@ func run(ctx context.Context, args ...string) (string, error) {
 	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME"), "LC_ALL=C", "COMPOSER_NO_INTERACTION=1"}
 	cmd.Stdin = nil
 	var out bytes.Buffer
-	cmd.Stdout = &limited{w: &out, n: maxOutput}
-	cmd.Stderr = &limited{w: &out, n: maxOutput} // several tools print versions to stderr
+	// One writer for both: several tools print versions to stderr, and exec
+	// only serialises the two streams when they share the same writer.
+	w := &limited{w: &out, n: maxOutput}
+	cmd.Stdout = w
+	cmd.Stderr = w
 	err = cmd.Run()
 	return strings.TrimSpace(out.String()), err
 }

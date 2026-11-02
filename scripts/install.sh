@@ -12,6 +12,11 @@
 # happens. Nothing stays installed. Pass `preview` as the first argument to
 # see what would be sent without sending anything.
 #
+# `agent install FOLDER` (opt-in, with MIG_AGENT_TOKEN) is the exception: it
+# copies the verified binary to ~/.local/share/mig-agent and adds one line to
+# your crontab, so scans can be started from your project page. Remove it
+# with `mig-collector agent remove`.
+#
 # Source: https://github.com/Application-Migration-Intelligence/collector (Apache-2.0)
 set -eu
 
@@ -29,7 +34,7 @@ case "$(uname -m)" in
 esac
 
 command=upload
-if [ "${1:-}" = "preview" ] || [ "${1:-}" = "collect" ]; then
+if [ "${1:-}" = "preview" ] || [ "${1:-}" = "collect" ] || [ "${1:-}" = "agent" ]; then
     command=$1
     shift
 fi

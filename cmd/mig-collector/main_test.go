@@ -94,3 +94,27 @@ func TestUsageErrors(t *testing.T) {
 		t.Errorf("upload without a key = %d", code)
 	}
 }
+
+func TestFolderErrorsSayWhatToGive(t *testing.T) {
+	parent := t.TempDir()
+	appDir := filepath.Join(parent, "site")
+	_ = os.MkdirAll(appDir, 0o755)
+	_ = os.WriteFile(filepath.Join(appDir, "composer.json"), []byte("{}"), 0o644)
+	file := filepath.Join(parent, "notes.txt")
+	_ = os.WriteFile(file, []byte("x"), 0o644)
+
+	for folder, want := range map[string]string{
+		"/path/to/audiostanding":         "is the example from the instructions",
+		filepath.Join(parent, "missing"): "does not exist; give your application's folder, the one that holds composer.json",
+		file:                             "is a file",
+		parent:                           "has no composer.json, but " + appDir + " does; give that folder",
+	} {
+		var out, errOut bytes.Buffer
+		if code := run([]string{"preview", folder}, &out, &errOut); code != exitUsage {
+			t.Errorf("preview %s = %d, want %d", folder, code, exitUsage)
+		}
+		if !strings.Contains(errOut.String(), want) {
+			t.Errorf("preview %s: %q does not say %q", folder, errOut.String(), want)
+		}
+	}
+}

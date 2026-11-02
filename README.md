@@ -18,7 +18,7 @@ servers and is not part of this repository.
      Docker, CI and web-server configuration).
    - **What it never reads:**
      - `vendor/`, `node_modules/`, `storage/` (uploads, logs, sessions,
-       caches), `public/uploads`, `public/storage`, `.git`;
+       caches), `uploads`, `public/uploads`, `public/media`, `public/storage`, `.git`;
      - media, databases and other data files;
      - credential files (`auth.json`, `.npmrc`, `.netrc`, `.pgpass`,
        `.my.cnf`).
@@ -26,7 +26,7 @@ servers and is not part of this repository.
      opened, and each must still be the same file it was when it was listed.
 2. **Records server facts:**
    - OS, kernel, CPU and memory;
-   - PHP version, extensions and a few `php.ini` settings;
+   - PHP version, extensions and a few `php.ini` settings (as the server's CLI php.ini sets them);
    - Composer, Node, npm, nginx/Apache, MariaDB/MySQL/PostgreSQL, Redis and
      Supervisor versions;
    - the web-server, PHP-FPM, Supervisor, systemd and cron configuration

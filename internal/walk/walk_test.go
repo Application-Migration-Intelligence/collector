@@ -48,6 +48,7 @@ func TestCollectsCodeAndConfigOnly(t *testing.T) {
 		"storage/app/invoice.pdf":        "%PDF",
 		"storage/logs/laravel.log":       "secret",
 		"public/uploads/a.php":           "<?php",
+		"uploads/2026/avatar.php":        "<?php",
 		"public/images/logo.png":         "png",
 		"database/database.sqlite":       "sqlite",
 		"database/migrations/2026_x.php": "<?php",
@@ -65,7 +66,7 @@ func TestCollectsCodeAndConfigOnly(t *testing.T) {
 		t.Errorf("files:\n got %s\nwant %s", got, want)
 	}
 	excluded := strings.Join(res.ExcludedDirs, " ")
-	if excluded != ".git node_modules public/uploads storage vendor" {
+	if excluded != ".git node_modules public/uploads storage uploads vendor" {
 		t.Errorf("excluded = %s", excluded)
 	}
 	if res.NotCollected[".png"] != 1 || res.NotCollected[".sqlite"] != 1 || res.NotCollected[".json"] != 1 {

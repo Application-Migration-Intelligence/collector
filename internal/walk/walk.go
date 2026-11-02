@@ -33,7 +33,7 @@ var excludedDirNames = map[string]bool{
 // Folders that hold runtime data (uploads, logs, sessions, caches, builds).
 var excludedDirPaths = map[string]bool{
 	"storage": true, "bootstrap/cache": true, "public/build": true, "public/hot": true,
-	"public/storage": true, "public/uploads": true,
+	"public/storage": true, "public/uploads": true, "uploads": true, "public/media": true,
 }
 
 var sourceExtensions = map[string]bool{
